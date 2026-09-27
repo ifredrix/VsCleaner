@@ -1,7 +1,7 @@
 ﻿<Window x:Class="VsCleaner.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="VS Cleaner — Hapus obj/bin &amp; cache build" Height="700" Width="1020"
+        Title="VS Cleaner — Hapus obj/bin &amp; cache build" Height="760" Width="1020"
         MinHeight="540" MinWidth="800"
         WindowStartupLocation="CenterScreen">
     <DockPanel Margin="12">
@@ -42,6 +42,14 @@
                 <StackPanel Orientation="Horizontal" Margin="6">
                     <Button x:Name="BtnOrphan" Content="Scan Orphan…" Width="110" Height="26" Click="BtnOrphan_Click"/>
                     <TextBlock Text="Cek semua file vs .sln/.csproj/.vcxproj + #include. Periksa manual sebelum hapus."
+                               Foreground="Gray" VerticalAlignment="Center" Margin="8,0,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header=".gitignore (bersihkan semua yang di-ignore git)" Margin="0,0,0,8">
+                <StackPanel Orientation="Horizontal" Margin="6">
+                    <Button x:Name="BtnGitignore" Content="Scan .gitignore…" Width="120" Height="26" Click="BtnGitignore_Click"/>
+                    <TextBlock Text="Baca pola .gitignore, cocokkan semua file/folder. Tidak dicentang otomatis."
                                Foreground="Gray" VerticalAlignment="Center" Margin="8,0,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
             </GroupBox>

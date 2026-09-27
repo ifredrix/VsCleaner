@@ -16,6 +16,12 @@ Klik `Scan Orphan…` untuk cek keterhubungan semua file vs `.sln/.csproj/.vcxpr
 - `orphan?`: source C++ klasik tak terdaftar di `.vcxproj`, atau source di luar folder proyek mana pun.
 Hasil orphan TIDAK dicentang otomatis — wajib review manual. SDK-style C# (glob implisit) tidak diflag sebagai orphan.
 
+## Scan .gitignore
+Klik `Scan .gitignore…` untuk menghapus seperti `git clean -X`: semua file/folder yang cocok pola `.gitignore`
+(`*`, `**`, `?`, `[abc]`, `!` negasi, `/` akhir = folder saja) jadi kandidat. Mendukung banyak `.gitignore`
+di subfolder. Folder `.git/` tidak pernah disentuh dan file `.gitignore` sendiri tidak ikut dihapus.
+Hasil tidak dicentang otomatis — periksa manual, karena pola seperti `*.db` atau `.env` bisa menjebak data lokal.
+
 ## Yang dihapus
 - `bin/` output build
 - `obj/` intermediate

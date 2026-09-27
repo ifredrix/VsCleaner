@@ -5,6 +5,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Microsoft.VisualBasic.FileIO;
 using Microsoft.Win32;
@@ -48,6 +49,7 @@ public partial class MainWindow : Window
     {
         BtnScan.IsEnabled = !busy;
         BtnOrphan.IsEnabled = !busy;
+        BtnGitignore.IsEnabled = !busy;
         BtnClean.IsEnabled = !busy;
         BtnCancel.IsEnabled = busy;
         Progress.IsIndeterminate = busy;
@@ -202,6 +204,48 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             MessageBox.Show("Gagal scan orphan:\n" + ex.Message, "VS Cleaner",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally { SetBusy(false); _cts.Dispose(); _cts = null; }
+    }
+
+    private async void BtnGitignore_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ValidRoot()) return;
+
+        _cts = new CancellationTokenSource();
+        SetBusy(true);
+        var root = Root;
+        try
+        {
+            var progress = new Progress<string>(s => TxtStatus.Text = s);
+            var (found, hasRules) = await Task.Run(() => GitignoreScanner.Scan(root, progress, _cts.Token));
+
+            if (!hasRules)
+            {
+                MessageBox.Show("Tidak ada file .gitignore di folder ini.", "VS Cleaner",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var existing = new HashSet<string>(_items.Select(x => x.FullPath),
+                StringComparer.OrdinalIgnoreCase);
+            int added = 0;
+            foreach (var f in found.OrderByDescending(x => x.SizeBytes))
+            {
+                if (existing.Contains(f.FullPath)) continue;
+                f.IsSelected = false;
+                f.PropertyChanged += (_, __) => UpdateTotal();
+                _items.Add(f);
+                added++;
+            }
+            UpdateTotal();
+            TxtStatus.Text = $"Scan .gitignore selesai. {added} kandidat baru (tidak dicentang, periksa manual).";
+        }
+        catch (OperationCanceledException) { TxtStatus.Text = "Dibatalkan."; }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Gagal scan .gitignore:\n" + ex.Message, "VS Cleaner",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally { SetBusy(false); _cts.Dispose(); _cts = null; }
@@ -446,7 +490,8 @@ public static class OrphanScanner
     private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase)
     {
         "bin", "obj", ".vs", ".git", ".svn", "testresults", "testresult",
-        "packages", "node_modules", ".sonarqube", "benchmarkdotnet.artifacts", "ipch", ".idea"
+        "packages", "node_modules", ".sonarqube", "benchmarkdotnet.artifacts", "ipch", ".idea",
+        "publish", "publish-fd"
     };
 
     private static readonly HashSet<string> JunkNames = new(StringComparer.OrdinalIgnoreCase)
@@ -693,6 +738,189 @@ public static class OrphanScanner
 
     private static long SafeLen(FileInfo fi) { try { return fi.Length; } catch { return 0; } }
     private static DateTime SafeTime(FileInfo fi) { try { return fi.LastWriteTime; } catch { return default; } }
+}
+
+/// <summary>Cocokkan semua file/folder terhadap pola .gitignore; hasil wajib direview manual.</summary>
+public static class GitignoreScanner
+{
+    private sealed class Rule
+    {
+        public Regex Regex = null!;
+        public bool DirOnly;
+        public bool Negated;
+        public string Original = "";
+    }
+
+    public static (List<CleanItem> items, bool hasRules) Scan(string root, IProgress<string>? progress, CancellationToken ct)
+    {
+        var sets = new List<(string dir, List<Rule> rules)>();
+        foreach (var g in EnumerateGitignores(root, ct))
+        {
+            var rules = Parse(g);
+            if (rules.Count > 0)
+                sets.Add((Path.GetDirectoryName(g)!, rules));
+        }
+
+        var result = new List<CleanItem>();
+        if (sets.Count == 0) return (result, false);
+
+        var stack = new Stack<string>();
+        stack.Push(root);
+        int n = 0;
+        while (stack.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var dir = stack.Pop();
+            string[] subs, files;
+            try { subs = Directory.GetDirectories(dir); files = Directory.GetFiles(dir); }
+            catch { continue; }
+
+            foreach (var sub in subs)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (IsGitDir(root, sub)) continue;
+                if (Match(sets, sub, isDir: true, out var pat))
+                {
+                    var (size, mod) = Scanner.DirSize(sub);
+                    result.Add(new CleanItem
+                    {
+                        Kind = "gitignore", Name = Path.GetFileName(sub), FullPath = sub,
+                        SizeBytes = size, Modified = mod, Detail = $"pola '{pat}'"
+                    });
+                    progress?.Report($"Ditemukan: {sub}");
+                    continue;
+                }
+                stack.Push(sub);
+            }
+
+            foreach (var f in files)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (Path.GetFileName(f) == ".gitignore") continue;
+                if (++n % 500 == 0) progress?.Report($"Cek .gitignore: {n} file… ({result.Count} kandidat)");
+                if (!Match(sets, f, isDir: false, out var pat)) continue;
+                FileInfo fi;
+                try { fi = new FileInfo(f); } catch { continue; }
+                result.Add(new CleanItem
+                {
+                    Kind = "gitignore", Name = Path.GetFileName(f), FullPath = f,
+                    SizeBytes = fi.Length, Modified = fi.LastWriteTime, Detail = $"pola '{pat}'"
+                });
+            }
+        }
+        return (result, true);
+    }
+
+    private static bool Match(List<(string dir, List<Rule> rules)> sets, string path, bool isDir, out string pattern)
+    {
+        pattern = "";
+        bool ignored = false;
+        foreach (var (dir, rules) in sets)
+        {
+            string rel = ToSlash(Path.GetRelativePath(dir, path));
+            if (rel == "." || rel.StartsWith("..")) continue;
+            foreach (var r in rules)
+            {
+                if (r.DirOnly && !isDir) continue;
+                if (r.Regex.IsMatch(rel)) { ignored = !r.Negated; pattern = r.Original; }
+            }
+        }
+        return ignored;
+    }
+
+    private static List<Rule> Parse(string gitignorePath)
+    {
+        var rules = new List<Rule>();
+        string[] lines;
+        try { lines = File.ReadAllLines(gitignorePath); } catch { return rules; }
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith("#")) continue;
+            bool negated = false;
+            if (line.StartsWith("!")) { negated = true; line = line[1..]; }
+            else if (line.StartsWith("\\#") || line.StartsWith("\\!")) line = line[1..];
+            if (line.Length == 0) continue;
+            bool dirOnly = line.EndsWith("/");
+            line = line.TrimEnd('/');
+            bool rooted = line.StartsWith("/") || line.Contains("/");
+            if (rooted) line = line.TrimStart('/');
+            string core = GlobToRegex(line);
+            string rx = rooted ? $"^{core}(/.*)?$" : $"^(.*/)?{core}(/.*)?$";
+            try
+            {
+                rules.Add(new Rule
+                {
+                    Regex = new Regex(rx, RegexOptions.IgnoreCase),
+                    DirOnly = dirOnly, Negated = negated, Original = (negated ? "!" : "") + raw.Trim()
+                });
+            }
+            catch { }
+        }
+        return rules;
+    }
+
+    private static string GlobToRegex(string glob)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < glob.Length; i++)
+        {
+            char c = glob[i];
+            if (c == '*')
+            {
+                if (i + 1 < glob.Length && glob[i + 1] == '*')
+                {
+                    if (i + 2 < glob.Length && glob[i + 2] == '/') { sb.Append("(.*/)?"); i += 2; }
+                    else { sb.Append(".*"); i++; }
+                }
+                else sb.Append("[^/]*");
+            }
+            else if (c == '?') sb.Append("[^/]");
+            else if (c == '[')
+            {
+                int end = glob.IndexOf(']', i + 1);
+                if (end < 0) sb.Append(Regex.Escape("["));
+                else
+                {
+                    var cls = glob.Substring(i + 1, end - i - 1);
+                    if (cls.StartsWith("!")) cls = "^" + cls[1..];
+                    sb.Append('[').Append(cls).Append(']');
+                    i = end;
+                }
+            }
+            else sb.Append(Regex.Escape(c.ToString()));
+        }
+        return sb.ToString();
+    }
+
+    private static IEnumerable<string> EnumerateGitignores(string root, CancellationToken ct)
+    {
+        var stack = new Stack<string>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var dir = stack.Pop();
+            string[] subs, files;
+            try { subs = Directory.GetDirectories(dir); files = Directory.GetFiles(dir, ".gitignore"); }
+            catch { continue; }
+            foreach (var f in files) yield return f;
+            foreach (var s in subs)
+            {
+                if (IsGitDir(root, s)) continue;
+                stack.Push(s);
+            }
+        }
+    }
+
+    private static bool IsGitDir(string root, string path)
+    {
+        var git = Path.Combine(root, ".git");
+        return path.Equals(git, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(git + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ToSlash(string p) => p.Replace(Path.DirectorySeparatorChar, '/');
 }
 
 public static class Cleaner
