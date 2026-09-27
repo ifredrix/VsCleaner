@@ -1,0 +1,98 @@
+﻿<Window x:Class="VsCleaner.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VS Cleaner — Hapus obj/bin &amp; cache build" Height="700" Width="1020"
+        MinHeight="540" MinWidth="800"
+        WindowStartupLocation="CenterScreen">
+    <DockPanel Margin="12">
+        <StackPanel DockPanel.Dock="Top">
+            <TextBlock Text="VS Cleaner" FontSize="20" FontWeight="Bold"/>
+            <TextBlock Text="Skan folder proyek, temukan folder basi (bin / obj / .vs / TestResults) lalu hapus agar build berikutnya lancar."
+                       Foreground="Gray" TextWrapping="Wrap" Margin="0,2,0,8"/>
+
+            <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="TxtRoot" Grid.Column="0" Height="28" VerticalContentAlignment="Center"
+                         ToolTip="Folder root berisi solution / proyek Visual Studio"/>
+                <Button x:Name="BtnBrowse" Grid.Column="1" Content="Browse…" Width="80" Height="28" Margin="6,0,0,0" Click="BtnBrowse_Click"/>
+                <Button x:Name="BtnScan" Grid.Column="2" Content="Scan" Width="80" Height="28" Margin="6,0,0,0" Click="BtnScan_Click"/>
+                <Button x:Name="BtnCancel" Grid.Column="3" Content="Batal" Width="70" Height="28" Margin="6,0,0,0" IsEnabled="False" Click="BtnCancel_Click"/>
+            </Grid>
+
+            <GroupBox Header="Target pembersihan" Margin="0,0,0,6">
+                <WrapPanel Margin="6" ItemWidth="210">
+                    <CheckBox x:Name="ChkBin" Content="bin/ (output build)" IsChecked="True" Margin="0,2"/>
+                    <CheckBox x:Name="ChkObj" Content="obj/ (intermediate)" IsChecked="True" Margin="0,2"/>
+                    <CheckBox x:Name="ChkVs" Content=".vs/ (cache VS)" IsChecked="True" Margin="0,2"/>
+                    <CheckBox x:Name="ChkTest" Content="TestResults/" IsChecked="True" Margin="0,2"/>
+                    <CheckBox x:Name="ChkCpp" Content="Debug/ Release/ x64/ (C++)" IsChecked="False" Margin="0,2"
+                              ToolTip="Hanya jika di dalam folder proyek (ada .sln/.vcxproj/.csproj)"/>
+                    <CheckBox x:Name="ChkUser" Content="*.user *.suo *.sdf" IsChecked="False" Margin="0,2"/>
+                    <CheckBox x:Name="ChkRecycle" Content="Buang ke Recycle Bin" IsChecked="True" Margin="0,2"
+                              ToolTip="Jika dicentang: hapus via Recycle Bin (bisa restore). Jika tidak: hapus permanen."/>
+                </WrapPanel>
+            </GroupBox>
+
+            <GroupBox Header="File tak relevan / yatim (eksperimental, tidak dicentang otomatis)" Margin="0,0,0,8">
+                <StackPanel Orientation="Horizontal" Margin="6">
+                    <Button x:Name="BtnOrphan" Content="Scan Orphan…" Width="110" Height="26" Click="BtnOrphan_Click"/>
+                    <TextBlock Text="Cek semua file vs .sln/.csproj/.vcxproj + #include. Periksa manual sebelum hapus."
+                               Foreground="Gray" VerticalAlignment="Center" Margin="8,0,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+            </GroupBox>
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Bottom">
+            <ProgressBar x:Name="Progress" Height="8" IsIndeterminate="False" Minimum="0" Maximum="100" Margin="0,8,0,4"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="TxtStatus" Grid.Column="0" Text="Siap." Foreground="Gray" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button x:Name="BtnOpen" Content="Buka di Explorer" Width="120" Margin="6,0,0,0" Click="BtnOpen_Click"
+                            ToolTip="Buka file/folder yang dipilih di Explorer"/>
+                    <Button x:Name="BtnAll" Content="Pilih Semua" Width="95" Margin="6,0,0,0" Click="BtnAll_Click"/>
+                    <Button x:Name="BtnNone" Content="Batal Pilih" Width="95" Margin="6,0,0,0" Click="BtnNone_Click"/>
+                    <Button x:Name="BtnClean" Content="Hapus yang Dipilih" Width="140" Margin="6,0,0,0"
+                            FontWeight="Bold" Click="BtnClean_Click"/>
+                </StackPanel>
+            </Grid>
+            <TextBlock x:Name="TxtTotal" Text="0 item • 0 B" FontWeight="SemiBold" Margin="0,6,0,0"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridResults" AutoGenerateColumns="False" CanUserAddRows="False"
+                  IsReadOnly="False" SelectionMode="Extended" Margin="0,0,0,4"
+                  MouseDoubleClick="GridResults_DoubleClick">
+            <DataGrid.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Buka di Explorer" Click="MenuOpen_Click"/>
+                    <MenuItem Header="Pilih" Click="MenuSelect_Click"/>
+                    <MenuItem Header="Lepas pilihan" Click="MenuDeselect_Click"/>
+                </ContextMenu>
+            </DataGrid.ContextMenu>
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Header="✓" Width="36">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <CheckBox IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}"
+                                      HorizontalAlignment="Center"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Jenis" Binding="{Binding Kind}" Width="110" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Nama" Binding="{Binding Name}" Width="150" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Ukuran" Binding="{Binding SizeDisplay}" Width="85" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Diubah" Binding="{Binding ModifiedDisplay}" Width="130" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Keterangan" Binding="{Binding Detail}" Width="220" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Path" Binding="{Binding FullPath}" Width="*" IsReadOnly="True"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</Window>
