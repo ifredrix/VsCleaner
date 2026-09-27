@@ -74,8 +74,6 @@ public partial class MainWindow : Window
         UpdateTotal();
     }
 
-    // ---------- Buka di Explorer ----------
-
     private CleanItem? SelectedItem() => GridResults.SelectedItem as CleanItem;
 
     private void BtnOpen_Click(object sender, RoutedEventArgs e) => OpenSelectedInExplorer();
@@ -115,8 +113,6 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
-
-    // ---------- Scan build basi ----------
 
     private async void BtnScan_Click(object sender, RoutedEventArgs e)
     {
@@ -166,15 +162,13 @@ public partial class MainWindow : Window
         finally { SetBusy(false); _cts.Dispose(); _cts = null; }
     }
 
-    // ---------- Scan orphan ----------
-
     private async void BtnOrphan_Click(object sender, RoutedEventArgs e)
     {
         if (!ValidRoot()) return;
 
         _cts = new CancellationTokenSource();
         SetBusy(true);
-        var root = Root; // tangkap di UI thread
+        var root = Root;
         try
         {
             var progress = new Progress<string>(s => TxtStatus.Text = s);
@@ -212,8 +206,6 @@ public partial class MainWindow : Window
         }
         finally { SetBusy(false); _cts.Dispose(); _cts = null; }
     }
-
-    // ---------- Hapus ----------
 
     private async void BtnClean_Click(object sender, RoutedEventArgs e)
     {
@@ -448,12 +440,7 @@ public static class Scanner
     }
 }
 
-/// <summary>
-/// Deteksi file tak relevan: (1) sampah (*.tmp/log/bak/dll stray), (2) biner besar tak disebut di
-/// .sln/.csproj/.vcxproj, (3) source C++ klasik yang tidak terdaftar di .vcxproj, (4) source di luar
-/// folder proyek mana pun. SDK-style C# (glob implisit) TIDAK diflag sebagai orphan.
-/// Hasil selalu butuh review manual.
-/// </summary>
+/// <summary>Heuristik file tak terpakai; hasil wajib direview manual.</summary>
 public static class OrphanScanner
 {
     private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase)
@@ -475,13 +462,12 @@ public static class OrphanScanner
 
     public static List<CleanItem> Scan(string root, IProgress<string>? progress, CancellationToken ct)
     {
-        // 1. Kumpulkan file definisi proyek
         var projFiles = EnumerateFilesSafe(root, ct)
             .Where(f => IsProjDef(f)).ToList();
 
-        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // nama file yang disebut
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var projectDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var classicCppIncludes = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase); // projDir -> {namafile}
+        var classicCppIncludes = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         bool hasClassicCSharp = false;
 
         foreach (var pf in projFiles)
@@ -504,7 +490,6 @@ public static class OrphanScanner
             foreach (var token in TokenizeFileNames(text))
                 referenced.Add(token);
 
-            // Parse XML untuk proyek klasik (explicit Include)
             if (pf.EndsWith(".vcxproj", StringComparison.OrdinalIgnoreCase) ||
                 pf.EndsWith(".vcxitems", StringComparison.OrdinalIgnoreCase) ||
                 pf.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
@@ -533,7 +518,6 @@ public static class OrphanScanner
             }
         }
 
-        // 2. Scan semua file
         var result = new List<CleanItem>();
         int n = 0;
         foreach (var f in EnumerateFilesSafe(root, ct))
@@ -550,7 +534,6 @@ public static class OrphanScanner
             try { fi = new FileInfo(f); }
             catch { continue; }
 
-            // (a) sampah -> kandidat aman
             if (JunkNames.Contains(name) || JunkExts.Contains(ext) || name.EndsWith("~"))
             {
                 result.Add(new CleanItem
@@ -562,7 +545,6 @@ public static class OrphanScanner
                 continue;
             }
 
-            // (b) biner/arsip besar tak disebut di proyek
             if (ext is ".dll" or ".exe" or ".lib" or ".zip" or ".7z" or ".rar" or ".msi" or ".iso" or ".vhd" or ".vhdx" or ".pdb")
             {
                 if (!referenced.Contains(name) && fi.Length > 2_000_000)
@@ -577,7 +559,7 @@ public static class OrphanScanner
                 continue;
             }
 
-            // (c) source C++ klasik terdaftar? jika di bawah proyek klasik tapi tak terdaftar -> orphan
+            // Hanya proyek klasik yang mencatat file eksplisit.
             if (ext is ".cpp" or ".cxx" or ".cc" or ".c" or ".h" or ".hpp" or ".xaml" or ".resx")
             {
                 var enclosing = EnclosingProjectDir(f, classicCppIncludes.Keys);
@@ -591,7 +573,6 @@ public static class OrphanScanner
                     });
                     continue;
                 }
-                // C# klasik eksplisit
                 if (hasClassicCSharp && ext is ".cs" or ".xaml" or ".resx")
                 {
                     var enc = EnclosingProjectDir(f, classicCppIncludes.Keys);
@@ -608,7 +589,6 @@ public static class OrphanScanner
                 }
             }
 
-            // (d) file source di luar folder proyek mana pun + nama tak dirujuk
             if (ext is ".cs" or ".cpp" or ".h" or ".vb")
             {
                 if (!IsUnderAnyDir(f, projectDirs) && !referenced.Contains(name))
@@ -646,7 +626,7 @@ public static class OrphanScanner
             foreach (var f in files) yield return f;
             foreach (var s in subs)
             {
-                if (SkipDirs.Contains(Path.GetFileName(s))) continue; // jangan masuk bin/obj/.vs/.git
+                if (SkipDirs.Contains(Path.GetFileName(s))) continue;
                 stack.Push(s);
             }
         }
@@ -686,7 +666,6 @@ public static class OrphanScanner
 
     private static IEnumerable<string> TokenizeFileNames(string text)
     {
-        // Ambil token yang terlihat seperti nama file (ada titik + ekstensi 1-5 char)
         int len = text.Length;
         int start = -1;
         for (int i = 0; i <= len; i++)
